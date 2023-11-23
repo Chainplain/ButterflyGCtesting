@@ -29,7 +29,7 @@ from datetime import date
 
 import csv
 
-startTime = time.time()
+startTime = time.perf_counter()
 
 
 
@@ -80,7 +80,7 @@ class plot_mannager:
         
     def update_plot( self, data2plot):
         global startTime
-        now = time.time()
+        now = time.perf_counter()
 
         for j in range( self. dim ):
             for c in self. curves_list[j]:
@@ -313,7 +313,7 @@ class socket_manager:
         self. record_start_time = time. time()
         
         # listening things
-        self. read_length = 10000
+        self. read_length = 2000
         self. Frame_read_complete = True
         self. Frame_data_count = 0
         self. is_recording = False
@@ -341,6 +341,8 @@ class socket_manager:
         _thread.start_new_thread(self.recording_thread,())
         # recording things
         self. record_length = 30
+        self. time_has_been_recording = 0
+        
         current_day = date.today().strftime("_%Y_%m_%d_")
         current_time = datetime.now().strftime("%I_%M_%S_%p")
 
@@ -391,7 +393,7 @@ class socket_manager:
                     for i in range(FramesInaRead):
                         Frame = [0.0] * 3
                         if i == 0:
-                            Frame[0] = time.time() - self. record_start_time
+                            Frame[0] = time.perf_counter() - self. record_start_time
                         int_values = self. Frame_data [read_ptr:read_ptr + 4]
                         binary_data = struct.pack('4B', *int_values)
                         float_value = struct.unpack('f', binary_data)[0]
@@ -431,7 +433,7 @@ class socket_manager:
                         read_ptr = read_ptr + 2
                         
                     if self.is_recording:
-                            self. imu_pwm_Record.append([ time.time() - self. record_start_time] + ImuFrame + pwmFrame)
+                            self. imu_pwm_Record.append([ time.perf_counter() - self. record_start_time] + ImuFrame + pwmFrame)
                         
 
                         
@@ -445,17 +447,17 @@ class socket_manager:
     def recording_thread(self):
         while (True):
             time.sleep(0.1)
-            if self. is_recording and (time.time() - self. record_start_time < self. record_length):
+            if self. is_recording:
+                self. time_has_been_recording = time.perf_counter() - self. record_start_time
+            if self. is_recording and (self. time_has_been_recording  < self. record_length):
                 with open(self. adc_File_name ,  'a', newline='') as file:
                     writer = csv.writer(file)
-                    for i in range(3):
-                        writer.writerows(self.adc_Record)
+                    writer.writerows(self.adc_Record)
                 self.adc_Record = []
                 
                 with open(self. imu_pwm_File_name, 'a', newline='') as file:
                     writer = csv.writer(file)
-                    for i in range(3):
-                        writer.writerows(self.imu_pwm_Record)
+                    writer.writerows(self.imu_pwm_Record)
                 self. imu_pwm_Record = []  
                 
     
@@ -466,18 +468,32 @@ class socket_manager:
         self. adc_File_name = "UIData/adc_Rec" +current_day + current_time +".csv"
         self. imu_pwm_File_name = "UIData/imu_pwm_Rec" +current_day + current_time +".csv"
         
+        with open(self. adc_File_name ,  'a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Time stamp(sec)', 'adc1', 'adc2'])
+
+                
+        with open(self. imu_pwm_File_name, 'a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Time stamp(sec)', 'adc1', 'adc2',
+                             'roll_angular_rate','pitch_angular_rate','yaw_angular_rate',
+                             'acc_X','acc_Y','acc_Z',
+                             'mag_X','mag_Y','mag_Z',
+                             'pressure','altitude'])
+
+        
         self. adc_Record = []
         self. imu_pwm_Record = []
-        
+        self. time_has_been_recording = 0
         self. is_recording = True
-        self. record_start_time = time.time()
+        self. record_start_time = time.perf_counter()
         self. record_length = record_time_length
         
     
     def stop_record(self):
         self. adc_Record = []
         self. imu_pwm_Record = []
-        
+        self. time_has_been_recording = 0
         self. is_recording = False
                  
 class Ui_MainWindow(QMainWindow):
@@ -761,14 +777,22 @@ class Ui_MainWindow(QMainWindow):
 
         
     def start_recording_infos(self):
-        _translate = QtCore.QCoreApplication.translate
-        self. scM. start_record( self. RecdoubleSpinBox.value())
-        self. Recbutton. setText(_translate("MainWindow", "Stop Recording"))
+        if not self. scM. is_recording:
+            _translate = QtCore.QCoreApplication.translate
+            self. scM. record_length = self. RecdoubleSpinBox.value()
+            self. scM. start_record( self. RecdoubleSpinBox.value())
+            self. textBrowser_2.insertPlainText("Recording starrted.\n")
+            self. Recbutton. setText(_translate("MainWindow", "Stop Recording"))
+        time.sleep(0.1)
         
     def stop_recording_infos(self):
-        _translate = QtCore.QCoreApplication.translate
-        self. scM. stop_record()
-        self. Recbutton. setText(_translate("MainWindow", "Start Recording"))
+        if self. scM. is_recording:
+            _translate = QtCore.QCoreApplication.translate
+            self. scM. stop_record()
+            self. textBrowser_2.insertPlainText("Recording stopped.\n")
+            self. progressBar.setValue(0)
+            self. Recbutton. setText(_translate("MainWindow", "Start Recording"))
+        time.sleep(0.1)
 
 
     def ao_rolling(self):
@@ -786,7 +810,7 @@ class Ui_MainWindow(QMainWindow):
                         euler_angle_in_rad = np. matrix ([ self.ABS_RX_value, self.ABS_RY_value, self.ABS_X_value]).T
                         rotation_matrix = E2M( euler_angle_in_rad)
                         if count == 0:
-                            self. AaO. march_forward_with_newOrientation(rotation_matrix, time.time())
+                            self. AaO. march_forward_with_newOrientation(rotation_matrix, time.perf_counter())
                         self. slC. roll_ref = self. ABS_RX_value
                         self. slC. pitch_ref = self. ABS_RY_value
                         self. slC. yaw_ref = self. ABS_X_value
@@ -796,7 +820,7 @@ class Ui_MainWindow(QMainWindow):
                         
                     case 2:
                         angular_rate_in_rad = np. matrix ([ self.ABS_RX_value, self.ABS_RY_value, self.ABS_X_value]).T
-                        self. AaO. march_forward_with_newAngularRate(angular_rate_in_rad, time.time())
+                        self. AaO. march_forward_with_newAngularRate(angular_rate_in_rad, time.perf_counter())
                         euler_angle_in_rad = M2E(self. AaO. orientation)
                         self. slC. roll_ref = euler_angle_in_rad[0,0]
                         self. slC. pitch_ref = euler_angle_in_rad[1,0]
@@ -808,7 +832,7 @@ class Ui_MainWindow(QMainWindow):
                     case _:
                         self.AaO.orientation = np.mat(np.eye(3))
                         self.AaO.omega = np.mat(np.zeros(3)).T
-                        self.AaO.last_update_time = time.time()
+                        self.AaO.last_update_time = time.perf_counter()
 
 
     def switch_focus(self, temp:int):
@@ -917,6 +941,8 @@ class Ui_MainWindow(QMainWindow):
         self. slC. adc2 = self. scM. adc2_to_plot
         
         self. slC. altitude = self. scM. alt_to_plot
+        
+        self. progressBar. setValue(int(self. scM. time_has_been_recording / self. scM. record_length* 100) )
 
 
 
