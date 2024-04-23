@@ -184,8 +184,9 @@ class slideCurve:
     def focuse_on_angle(self):
         for manager in self.all_color_changing_manager:
             manager.release_focused()
-        for i in range(0,3):
+        for i in range(0,2):
             self.all_color_changing_manager[i].set_focused()
+        self.all_color_changing_manager[5].set_focused()
             
     def focuse_on_angularRate(self):
         for manager in self.all_color_changing_manager:

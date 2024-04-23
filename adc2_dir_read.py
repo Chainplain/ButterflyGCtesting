@@ -101,7 +101,7 @@ def recording_thread():
     Frame_read_complete = True
     Frame_data_count = 0
     Info_data_count = 0
-    Record_time_length = 30# in seconds
+    Record_time_length = 10# in seconds
     current_day = date.today().strftime("_%Y_%m_%d_")
     current_time = datetime.now().strftime("%I_%M_%S_%p")
 

@@ -3,6 +3,7 @@
 #modified 2023-11-21 
 import numpy as np
 from   scipy.spatial.transform import Rotation 
+import math
 
 EXTREME_SMALL_NUMBER_4_ROTATION_COMPUTATION = 0.00000000001
 
@@ -76,20 +77,15 @@ def FromEuler_Angle_in_Rad2Matrix (Euler_Vec):
         return np.matrix(myRotation.as_matrix())
     
 def FromQuat2Euler_Angle_in_Rad(Quat_Vec):
-    if type(Quat_Vec) == np.matrix:
-        myRotation = Rotation.from_quat([Quat_Vec[0,0], \
-                                         Quat_Vec[1,0], \
-                                         Quat_Vec[2,0], \
-                                         Quat_Vec[3,0]])
-        return np.matrix(myRotation.as_euler('xyz'))
-    if type(Quat_Vec) == list:
-        if np.linalg.norm(Quat_Vec) <= 0.5:
-            Quat_Vec = [0, 0, 0, 1]
-        try:
-            myRotation = Rotation.from_quat(Quat_Vec)
-            return myRotation.as_euler('xyz')
-        except:
-            return np.array([0,0,0])
+    raw_x_before_asin = 2 * Quat_Vec[2] * Quat_Vec[3] + 2 * Quat_Vec[0] * Quat_Vec[1]
+    x_before_asin = min(1.0, max(-1.0, raw_x_before_asin))
+    
+    x = math.asin(x_before_asin)
+    y = math.atan2( 2 * Quat_Vec[0] * Quat_Vec[2] - 2 * Quat_Vec[1] * Quat_Vec[3], \
+                      Quat_Vec[0]**2 - Quat_Vec[1]**2 - Quat_Vec[2]**2 + Quat_Vec[3]**2 )
+    z = math.atan2(2 * Quat_Vec[0] * Quat_Vec[3] - 2 * Quat_Vec[1] * Quat_Vec[2], \
+                     Quat_Vec[0]**2 - Quat_Vec[1]**2 + Quat_Vec[2]**2 - Quat_Vec[3]**2)
+    return [x,y,z]
         
 
 

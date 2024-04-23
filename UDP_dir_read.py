@@ -137,8 +137,7 @@ def send_heart_beat():
         TCP_write_thread.acquire()
         time_length_has_not_rec_data_in_sec = time_length_has_not_rec_data_in_sec + hear_beat_period
         try:
-                Heart_beat_text = "bipo"
-                data = Heart_beat_text.encode()
+                data = b'Hello, server!'
                 sendhost = '192.168.50.143'
                 sendport = 6101
                 mysocket.sendto(data, (sendhost, sendport))
@@ -156,7 +155,7 @@ def recording_thread():
     Frame_read_complete = True
     Frame_data_count = 0
     Info_data_count = 0
-    Record_time_length = 30# in seconds
+    Record_time_length = 10# in seconds
     current_day = date.today().strftime("_%Y_%m_%d_")
     current_time = datetime.now().strftime("%I_%M_%S_%p")
 
@@ -209,8 +208,8 @@ def recording_thread():
                     
                 
                 # print(Frame_data)
-                if  len(Frame_data)== 224 and ischecked:
-                    read_ptr = 0
+                if  len(Frame_data)== 232 and ischecked:
+                    read_ptr = 8
                     # print(Frame_data) 
                     FramesInaRead=20                 
                     for i in range(FramesInaRead):
@@ -248,6 +247,11 @@ def recording_thread():
 timer = pg.QtCore.QTimer()
 timer.timeout.connect(update_plot)
 timer.start(50)
+
+data = b'Hello, server!'
+sendhost = '192.168.50.143'
+sendport = 6101
+mysocket.sendto(data, (sendhost, sendport))
 
 _thread.start_new_thread(recording_thread,())
 _thread.start_new_thread(send_heart_beat, ())

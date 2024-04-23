@@ -10,6 +10,9 @@
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtWidgets import QMainWindow, QApplication, QPushButton, QWidget,QCheckBox
+from PyQt5.QtGui import QTextCharFormat, QColor
+from PyQt5.QtCore import QDateTime
+
 import pyqtgraph as pg
 import time 
 import numpy as np
@@ -23,6 +26,8 @@ from RotationComputation import FromEuler_Angle_in_Rad2Matrix as E2M
 from RotationComputation import FromMatrix2Euler_Angle_in_Rad as M2E
 from RotationComputation import FromQuat2Euler_Angle_in_Rad as Q2E
 import struct
+import logging
+
 
 from datetime import datetime
 from datetime import date
@@ -191,8 +196,9 @@ class slideCurve:
     def focuse_on_angle(self):
         for manager in self.all_color_changing_manager:
             manager.release_focused()
-        for i in range(0,3):
+        for i in range(0,2):
             self.all_color_changing_manager[i].set_focused()
+        self.all_color_changing_manager[5].set_focused()
             
     def focuse_on_angularRate(self):
         for manager in self.all_color_changing_manager:
@@ -211,6 +217,7 @@ class game_pad_manager(QObject):
     BTN_WEST_signal = pyqtSignal()
     BTN_TL_signal = pyqtSignal()
     BTN_TR_signal = pyqtSignal()
+    ABS_Z_RZ_Trigger_singal = pyqtSignal()
     
     def __init__(self, parent=None):
         super(game_pad_manager, self).__init__(parent)
@@ -227,6 +234,9 @@ class game_pad_manager(QObject):
         self. BTN_TL = 0
         self. BTN_TR = 0
         
+        self. ABS_Z_RZ_Triggered = False
+        self. ABS_Z_RZ_Trigger_Thers_upper = 0.9
+        self. ABS_Z_RZ_Trigger_Thers_lower = 0.2
         # self. BTN_NORTH_signal = pyqtSignal()
         
         
@@ -248,6 +258,7 @@ class game_pad_manager(QObject):
             try:
                 events = get_gamepad()
                 for event in events: 
+                    # print(event.code +"  ",event.state)
                     match event.code:
                         case 'ABS_X': 
                             self. ABS_X =  event.state
@@ -296,12 +307,27 @@ class game_pad_manager(QObject):
                         case 'BTN_TR': 
                             self. BTN_TR =  event.state
                             if self. BTN_TR == 1:
-                                self. BTN_TR_signal.emit()
+                                self. BTN_TR_signal.emit()            
+                    if self. ABS_Z  > self. ABS_Z_RZ_Trigger_Thers_upper and \
+                    self. ABS_RZ > self. ABS_Z_RZ_Trigger_Thers_upper and \
+                    not self. ABS_Z_RZ_Triggered:
+                        self. ABS_Z_RZ_Triggered = True
+                        self. ABS_Z_RZ_Trigger_singal.emit()
+                        
+                    if self. ABS_Z  <= self. ABS_Z_RZ_Trigger_Thers_upper and \
+                    self. ABS_RZ <= self. ABS_Z_RZ_Trigger_Thers_upper:
+                        self. ABS_Z_RZ_Triggered = False                    
             except:
                 time.sleep(0.1)
-
-class socket_manager:
-    def __init__(self, host_IP, host_port_name, remote_IP, remote_port_name):
+                
+   
+                
+class socket_manager(QObject):
+    record_complete_signal = pyqtSignal()
+    TCP_write_thread = threading.Lock()
+    
+    def __init__(self, host_IP, host_port_name, remote_IP, remote_port_name, parent=None):
+        super(socket_manager, self).__init__(parent)
         self. my_host_IP = host_IP
         self. my_host_port_name = host_port_name
         self. my_remote_IP = remote_IP
@@ -331,6 +357,11 @@ class socket_manager:
         self. pitch_to_plot = 0
         self. yaw_to_plot  = 0
         
+        self. quaternion_w = 1
+        self. quaternion_x = 0
+        self. quaternion_y = 0
+        self. quaternion_z = 0
+        
         self. roll_r_to_plot = 0
         self. pitch_r_to_plot = 0
         self. yaw_r_to_plot = 0
@@ -349,9 +380,15 @@ class socket_manager:
         self. adc_File_name = "UIData/adc_Rec" +current_day + current_time +".csv"
         self. imu_pwm_File_name = "UIData/imu_pwm_Rec" +current_day + current_time +".csv"
 
+
         
         
     def listening_thread(self):
+        DATA_MODE = 1
+        INFO_MODE = 2
+        
+        self. Info_data_rec = 0
+        self. obtained_data_mode = DATA_MODE # DATA_MODE is more frequent
         while True:
             data = self. mysocket. recv(self. read_length)
             for datum in data:
@@ -367,10 +404,12 @@ class socket_manager:
                     continue
                 if self. Frame_data_count == 2 and (not self. Frame_read_complete) and datum == 115: # third byte 's'
                     self. Frame_data_count = self. Frame_data_count + 1
+                    self. obtained_data_mode = DATA_MODE
                     continue
-                if self. Frame_data_count == 3 and (not self. Frame_read_complete): # third byte 's'
+                if self. Frame_data_count == 3 and (not self. Frame_read_complete): # get the data_number
                     self. Frame_data_count = self. Frame_data_count + 1
                     Info_data_count = datum
+                    self. Info_data_rec = datum
                     self. is_checked = False
                     sum_check = 0
                     continue
@@ -386,14 +425,20 @@ class socket_manager:
                     
                 
                 # print(Frame_data)
-                if  len(self. Frame_data ) == 224 and self. is_checked:
+                if  len(self. Frame_data ) == self. Info_data_rec and self. is_checked and self. obtained_data_mode == DATA_MODE:
                     read_ptr = 0
+                    int_values = self. Frame_data [read_ptr:read_ptr + 8]
+                    binary_data = struct.pack('8B', *int_values)
+                    time_stamp = struct.unpack('d', binary_data)[0]
+                    # Frame[1] = double_value
+                    
+                    read_ptr = read_ptr + 8
                     # print(Frame_data) 
                     FramesInaRead = 20                 
                     for i in range(FramesInaRead):
                         Frame = [0.0] * 3
                         if i == 0:
-                            Frame[0] = time.perf_counter() - self. record_start_time
+                            Frame[0] = time_stamp
                         int_values = self. Frame_data [read_ptr:read_ptr + 4]
                         binary_data = struct.pack('4B', *int_values)
                         float_value = struct.unpack('f', binary_data)[0]
@@ -421,7 +466,19 @@ class socket_manager:
                         ImuFrame[i] = struct.unpack('f', binary_data)[0]
                         read_ptr = read_ptr + 4
                     
-                    [self. roll_to_plot,  self. pitch_to_plot,  self. yaw_to_plot] = Q2E( ImuFrame[0 : 4])
+                    self. quaternion_w = ImuFrame[3]
+                    self. quaternion_x = ImuFrame[0]
+                    self. quaternion_y = ImuFrame[1]
+                    self. quaternion_z = ImuFrame[2]
+                    
+                    # self. roll_to_plot = self. quaternion_x
+                    # self. pitch_to_plot = self. quaternion_y 
+                    # self. yaw_to_plot = self. quaternion_z
+                    
+                    [self. roll_to_plot,  self. pitch_to_plot,  self. yaw_to_plot] = Q2E( [ self. quaternion_w,\
+                                                                                            self. quaternion_x,\
+                                                                                            self. quaternion_y,\
+                                                                                            self. quaternion_z])
                     [self. roll_r_to_plot, self. pitch_r_to_plot, self. yaw_r_to_plot] = ImuFrame[4 : 7]
                     self. alt_to_plot = ImuFrame[14] * 10
                     
@@ -433,9 +490,7 @@ class socket_manager:
                         read_ptr = read_ptr + 2
                         
                     if self.is_recording:
-                            self. imu_pwm_Record.append([ time.perf_counter() - self. record_start_time] + ImuFrame + pwmFrame)
-                        
-
+                            self. imu_pwm_Record.append([time_stamp] + ImuFrame + pwmFrame)
                         
                     # print(adc_Frame)
                 # IF all the cases are not triggered.
@@ -458,8 +513,109 @@ class socket_manager:
                 with open(self. imu_pwm_File_name, 'a', newline='') as file:
                     writer = csv.writer(file)
                     writer.writerows(self.imu_pwm_Record)
-                self. imu_pwm_Record = []  
+                self. imu_pwm_Record = []
+            if self. is_recording and (self. time_has_been_recording  >= self. record_length):
+                self. record_complete_signal. emit()
+    
+    def pack_bytes(self, category, data):
+        frame_head = "UU"
+        frame_head_bytes = frame_head.encode()
+        
+        cate_bytes = category.encode()
+        
+        data_no_bytes = bytes()
+        data_bytes = bytes()
+        check_sum_bytes = bytes()
+        
+        FLOAT_LENGTH_IN_BYTES = 4
+        
+        match category:
+            case "S":
+                data_no = len(data)
+                data_no_bytes = data_no.to_bytes(1)
+                data_bytes = data.encode()
+                check_sum = 0
+                for datum in data:
+                    check_sum = check_sum + ord(datum)
+                check_sum = check_sum & 0xFF
+                check_sum_bytes = check_sum.to_bytes(1)
+        
+            # case "F":
+            #     data_no = len(data) * FLOAT_LENGTH_IN_BYTES
+            #     data_no_bytes = data_no.to_bytes(1)
+            #     for datum in data:
+            #         data_bytes = data_bytes + struct.pack('f', datum)
+            #     check_sum = 0
+            #     for d_byte_int in data_bytes:
+            #         check_sum = check_sum + d_byte_int
+            #     check_sum = check_sum & 0xFF
+            #     check_sum_bytes = check_sum.to_bytes(1)
                 
+            case "A"|"F"|"#":
+                data_no = len(data) * FLOAT_LENGTH_IN_BYTES
+                data_no_bytes = data_no.to_bytes(1)
+                for datum in data:
+                    data_bytes = data_bytes + struct.pack('f', datum)
+                check_sum = 0
+                for d_byte_int in data_bytes:
+                    check_sum = check_sum + d_byte_int
+                check_sum = check_sum & 0xFF
+                check_sum_bytes = check_sum.to_bytes(1)
+                 
+        send_bytes = frame_head_bytes + cate_bytes +  data_no_bytes + data_bytes + check_sum_bytes
+        return send_bytes   
+
+                      
+    def send_arm_command(self):
+        self. TCP_write_thread.acquire()
+        try:       
+            send_bytes = self.pack_bytes("S","AA")   
+            self. mysocket.sendto(send_bytes, (self.my_remote_IP, self. my_remote_port_name))
+        finally:
+            self. TCP_write_thread.release()
+    
+    
+    def send_disarm_command(self):
+        self. TCP_write_thread.acquire()
+        try:       
+            send_bytes = self.pack_bytes("S","DD") 
+            self. mysocket.sendto(send_bytes, (self.my_remote_IP, self. my_remote_port_name))
+        finally:
+            self. TCP_write_thread.release()
+    
+    def send_attitude_command(self, attitude_command:list):
+        self. TCP_write_thread.acquire()
+        try:       
+            send_bytes = self.pack_bytes("A", attitude_command) 
+            self. mysocket.sendto(send_bytes, (self.my_remote_IP, self. my_remote_port_name))
+        finally:
+            self. TCP_write_thread.release()
+    
+    def send_force_command(self, forces_and_torques:list):
+        self. TCP_write_thread.acquire()
+        try:       
+            send_bytes = self.pack_bytes("F", forces_and_torques) 
+            self. mysocket.sendto(send_bytes, (self.my_remote_IP, self. my_remote_port_name))
+        finally:
+            self. TCP_write_thread.release()
+    
+    def send_position_command(self, alt_and_heading:list):
+        self. TCP_write_thread.acquire()
+        try:       
+            send_bytes = self.pack_bytes("P", alt_and_heading) 
+            self. mysocket.sendto(send_bytes, (self.my_remote_IP, self. my_remote_port_name))
+        finally:
+            self. TCP_write_thread.release()
+            
+    def send_calibration_command(self, calibration_paras:list):
+        self. TCP_write_thread.acquire()
+        try:       
+            send_bytes = self.pack_bytes("#", calibration_paras) 
+            self. mysocket.sendto(send_bytes, (self.my_remote_IP, self. my_remote_port_name))
+        finally:
+            self. TCP_write_thread.release()
+    
+                    
     
     def start_record(self, record_time_length):
         current_day = date.today().strftime("_%Y_%m_%d_")
@@ -475,7 +631,8 @@ class socket_manager:
                 
         with open(self. imu_pwm_File_name, 'a', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(['Time stamp(sec)', 'adc1', 'adc2',
+            writer.writerow(['Time stamp(sec)', 
+                             'quaternion_x', 'quaternion_y','quaternion_z','quaternion_w',
                              'roll_angular_rate','pitch_angular_rate','yaw_angular_rate',
                              'acc_X','acc_Y','acc_Z',
                              'mag_X','mag_Y','mag_Z',
@@ -501,10 +658,13 @@ class Ui_MainWindow(QMainWindow):
     ABS_Y_value = 0
     ABS_RX_value = 0
     ABS_RY_value = 0
+    calibration_completed_signal = pyqtSignal()
+    progressBarupdate_singal = pyqtSignal(int)
+    
     def __init__(self):
         super().__init__()
         self.setObjectName("QFlapControl")
-        self.resize(800, 1000)
+        self.resize(1500, 1100)
         self.setMinimumSize(QtCore.QSize(1500, 1100))
         self.widget = QtWidgets.QWidget(self)
         self.widget.setMinimumSize(QtCore.QSize(1500, 1100))
@@ -763,33 +923,159 @@ class Ui_MainWindow(QMainWindow):
         
         here_host_IP = '192.168.50.141'
         here_host_port = 6001
-        here_remote_IP = '192.168.50.143'
+        here_remote_IP = '192.168.50.69'
+        #'192.168.50.69'
         here_remote_port = 6101
         self. scM = socket_manager(here_host_IP, here_host_port,\
                 here_remote_IP, here_remote_port)
+        
+        self. isArmed = False
+        
+ 
+        
         self.gpM.BTN_SOUTH_signal.connect(self.start_recording_infos)
         self.gpM.BTN_EAST_signal.connect(self.stop_recording_infos)
+        self.Recbutton.clicked.connect(self. switch_recording_infos)
+        self.Calibutton.clicked.connect(self.start_calibration)
+        
+        self.gpM.ABS_Z_RZ_Trigger_singal.connect(self. switch_arm_infos)
+        
+        self.scM.record_complete_signal.connect(self. stop_recording_infos)
+        self.calibration_completed_signal.connect(self. reset_calubration_button)
+        self.progressBarupdate_singal.connect(lambda value: self.progressBar.setValue(value))
+        self.ModecomboBox.currentIndexChanged.connect(self.flight_mode_changed)
         
         self.setCentralWidget(self.widget)
 
         self.retranslateUi(self)
         QtCore.QMetaObject.connectSlotsByName(self)
 
+    
+    def start_calibration(self):
+        self.Calibutton.setText("Calbrating, please wait..")
+        self.Calibutton.setDisabled(True)
+        _thread.start_new_thread(self.calibration_thread,())
+    
+    def reset_calubration_button(self):
+        self. Calibutton.setText("Start Calibration")
+        self.Calibutton.setEnabled(True)
         
+    
+        
+    def calibration_thread(self):
+        calibration_sample_interval = 0.1 # Sample interval in calibration, in seconds   
+        calibbration_times = 50 # The total number of samples
+        quaternions =[]
+        self.InputTextWithoutLog("-Calibration Started in 5 seconds.\n-Please align the vehicle Z axix UP.\n")
+        for i in range(5):
+            time.sleep(1.0)
+            self.InputTextWithoutLog("  "+str(5 - i) +"...\n")
+        self.InputText("Calibration Start.\n")
+            
+        for i in range(calibbration_times):
+            quaternions.append(np.array([self.scM.quaternion_w, 
+                                         self.scM.quaternion_x,
+                                         self.scM.quaternion_y,
+                                         self.scM.quaternion_z]))
+            time.sleep(calibration_sample_interval)
+            # self. progressBar. setValue(int((i+1) / calibbration_times * 100) )
+            self. progressBarupdate_singal.emit(int((i+1) / calibbration_times * 100))
+
+        self. progressBarupdate_singal. emit(0)
+        quat = self.average_quaternions(quaternions) 
+        self.InputText("Calibration Complete [qw qx qy qz]:" + np.array2string(quat)+".")
+        
+        # time.sleep(0.1)
+        self.scM.send_calibration_command( quat.tolist() )   # The quat send to Remote is [qw, qx, qy, qz]
+        self. calibration_completed_signal. emit() 
+        
+    
+    def normalize_quaternion(self, q):
+        norm = np.linalg.norm(q)
+        return q / norm
+
+    # Function to average quaternions
+    def average_quaternions(self, quaternions):
+        # Normalize all quaternions
+        normalized_quaternions = [self.normalize_quaternion(q) for q in quaternions]
+        
+        # Calculate the sum of quaternions
+        sum_quaternion = np.sum(normalized_quaternions, axis=0)
+        
+        # Normalize the sum to get the average quaternion
+        average_quaternion = self. normalize_quaternion(sum_quaternion)
+        
+        return average_quaternion
+
+    def switch_recording_infos(self):
+        if not  self. scM. is_recording:
+            self. start_recording_infos()
+            return 
+        if self. scM. is_recording:
+            self. stop_recording_infos()
+            return 
+    
+    def switch_arm_infos(self):
+        # print("arm switched")
+        if not self. isArmed:
+            self. send_arm_signals()
+            self.Stalable.setText("Status: Armed.")
+            return
+        if self. isArmed:
+            self. send_disarm_signals()
+            self.Stalable.setText("Status: Disarmed.")
+            return
+            
+    
+    def send_arm_signals(self):
+        if not self. isArmed:
+            self. scM. send_arm_command()
+            self. InputText("Arm the robot.\n")
+            self. isArmed = True
+        time.sleep(0.1)
+        
+    def send_disarm_signals(self):
+        if self. isArmed:
+            self. scM. send_disarm_command()
+            self. InputText("Disarm the robot.\n")
+            self. isArmed = False
+        time.sleep(0.1)
+            
+            
     def start_recording_infos(self):
         if not self. scM. is_recording:
             _translate = QtCore.QCoreApplication.translate
             self. scM. record_length = self. RecdoubleSpinBox.value()
             self. scM. start_record( self. RecdoubleSpinBox.value())
-            self. textBrowser_2.insertPlainText("Recording starrted.\n")
+            self. InputText("Recording starrted.\n")
             self. Recbutton. setText(_translate("MainWindow", "Stop Recording"))
         time.sleep(0.1)
+    
+    def InputText(self, Text):
+        # char_format = QTextCharFormat()
+        # char_format.setForeground(QColor("#FF0000"))
+        self. textBrowser_2.setTextColor(QColor("#BB1100"))
+        currentDateTime = QDateTime.currentDateTime()
+        currentTime = currentDateTime.time()
+        self. textBrowser_2.insertPlainText(currentTime.toString("[hh:mm:ss]:"))
+        self. textBrowser_2.insertPlainText(Text)
+        logging.info(Text)
+        cursor = self. textBrowser_2.textCursor()
+        cursor.movePosition(cursor.End)
+        self. textBrowser_2.setTextCursor(cursor)
+        
+    def InputTextWithoutLog(self, Text):
+        self. textBrowser_2.setTextColor(QColor("#000000"))
+        self. textBrowser_2.insertPlainText(Text)
+        cursor = self. textBrowser_2.textCursor()
+        cursor.movePosition(cursor.End)
+        self. textBrowser_2.setTextCursor(cursor)
         
     def stop_recording_infos(self):
         if self. scM. is_recording:
             _translate = QtCore.QCoreApplication.translate
             self. scM. stop_record()
-            self. textBrowser_2.insertPlainText("Recording stopped.\n")
+            self. InputText("Recording stopped.\n")
             self. progressBar.setValue(0)
             self. Recbutton. setText(_translate("MainWindow", "Start Recording"))
         time.sleep(0.1)
@@ -798,25 +1084,51 @@ class Ui_MainWindow(QMainWindow):
     def ao_rolling(self):
         division = 20
         count = 0
+        computation_gap = 1e-3
+        divisor = 20
         while(True):
             count = count + 1
-            if count == 20:
+            if count == divisor:
                 count = 0
-            time.sleep(0.001)
+            time.sleep(computation_gap)
             """["Manual", "Attitude", "Acrobat", "Autonomous"]"""
             if self. ModecomboBox:
                 match self.ModecomboBox.currentIndex():
+                    case 0:
+                        if count == 0:
+                            self. scM. send_force_command( [self. ABS_Y_value, self.ABS_RX_value, self.ABS_RY_value, self.ABS_X_value])
+                        self.AaO.orientation = np.mat(np.eye(3))
+                        self.AaO.omega = np.mat(np.zeros(3)).T
+                        self.AaO.last_update_time = time.perf_counter()
+                        
                     case 1:
-                        euler_angle_in_rad = np. matrix ([ self.ABS_RX_value, self.ABS_RY_value, self.ABS_X_value]).T
+                        yaw_changing_rate = 2 * np.pi
+                        ABS_X_v = self.ABS_X_value
+                        if abs(ABS_X_v) < 0.1:
+                            ABS_X_v = 0
+                        elif ABS_X_v < -0.1:
+                            ABS_X_v = ABS_X_v + 0.1
+                        else:
+                            ABS_X_v = ABS_X_v - 0.1
+                        
+                        self. slC. yaw_ref += yaw_changing_rate * ABS_X_v * computation_gap
+                        while self. slC. yaw_ref > np.pi:
+                            self. slC. yaw_ref -= 2 * np.pi
+                        while self. slC. yaw_ref < -np.pi:
+                            self. slC. yaw_ref += 2 * np.pi
+                            
+                        if count == 0:
+                            self. scM. send_attitude_command( [self. ABS_Y_value, self.ABS_RX_value, self.ABS_RY_value, self. slC. yaw_ref ])
+                        euler_angle_in_rad = np. matrix ([ self.ABS_RX_value, self.ABS_RY_value, 0]).T
                         rotation_matrix = E2M( euler_angle_in_rad)
                         if count == 0:
                             self. AaO. march_forward_with_newOrientation(rotation_matrix, time.perf_counter())
                         self. slC. roll_ref = self. ABS_RX_value
                         self. slC. pitch_ref = self. ABS_RY_value
-                        self. slC. yaw_ref = self. ABS_X_value
+                        
                         self. slC. angular_rate_roll_ref =  self. AaO. omega[0,0]
                         self. slC. angular_rate_pitch_ref = self. AaO. omega[1,0]
-                        self. slC. angular_rate_yaw_ref =   self. AaO. omega[2,0]
+                        self. slC. angular_rate_yaw_ref =   yaw_changing_rate * self.ABS_X_value
                         
                     case 2:
                         angular_rate_in_rad = np. matrix ([ self.ABS_RX_value, self.ABS_RY_value, self.ABS_X_value]).T
@@ -837,10 +1149,15 @@ class Ui_MainWindow(QMainWindow):
 
     def switch_focus(self, temp:int):
         match temp:
+            case 0:
+                self. slC. release_all_focuse()
+                self.InputText("Set to Manual mode.\n")
             case 1:
                 self. slC. focuse_on_angle()
+                self.InputText("Set to Attitude mode.\n")
             case 2:
                 self. slC. focuse_on_angularRate()
+                self.InputText("Set to Acrobat mode.\n")
             case _:
                 self. slC. release_all_focuse()
         
@@ -856,6 +1173,10 @@ class Ui_MainWindow(QMainWindow):
         if temp < 0:
             temp = len(self. mode_items)-1
         self. ModecomboBox. setCurrentIndex(temp)
+        self.switch_focus(temp)
+        
+    def flight_mode_changed(self):
+        temp =  self. ModecomboBox.currentIndex()
         self.switch_focus(temp)
         
     def retranslateUi(self, MainWindow):
@@ -942,7 +1263,8 @@ class Ui_MainWindow(QMainWindow):
         
         self. slC. altitude = self. scM. alt_to_plot
         
-        self. progressBar. setValue(int(self. scM. time_has_been_recording / self. scM. record_length* 100) )
+        if self. scM. is_recording:
+            self. progressBar. setValue(int(self. scM. time_has_been_recording / self. scM. record_length* 100) )
 
 
 
@@ -967,6 +1289,12 @@ def main(args=None):
 
     import sys
     a = QApplication(sys.argv) 
+    
+    current_day = date.today().strftime("_%Y_%m_%d_")
+    current_time = datetime.now().strftime("%I_%M_%S_%p")
+    log_File_name = "logs/Rec" +current_day + current_time +".log"
+    logging.basicConfig(filename = log_File_name, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
     window = Ui_MainWindow()
     
     curve_update_timer = pg.QtCore.QTimer()
